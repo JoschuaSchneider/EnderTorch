@@ -1,13 +1,13 @@
 package dev.joschua.endertorch.event;
 
+import dev.joschua.endertorch.database.TorchDatabase;
 import dev.joschua.endertorch.database.TorchLocation;
-import dev.joschua.endertorch.database.TorchLocationDatabase;
 import dev.joschua.endertorch.item.EnderTorchItem;
 import org.bukkit.Location;
-import org.bukkit.Material;
 import org.bukkit.Sound;
 import org.bukkit.block.Block;
 import org.bukkit.entity.Player;
+import org.bukkit.Material;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
@@ -28,18 +28,10 @@ import java.util.Optional;
 
 public class EnderTorchListener implements Listener {
 
-    TorchLocationDatabase torchLocationDatabase = new TorchLocationDatabase();
-
-    private static int currentId = 0;
-
-    public static int getNextId() {
-        return currentId++;
-    }
-
-
     private final CompMaterial teleportPriceMaterial = CompMaterial.fromMaterial(Material.DIAMOND);
     private final int teleportPriceAmount = 1;
-    private final String teleportPriceTextual = "20 Diamonds";
+    private final String teleportPriceTextual = "1 Diamond";
+
     @EventHandler
     public void onBlockPlaced(final BlockPlaceEvent event) {
 
@@ -52,7 +44,7 @@ public class EnderTorchListener implements Listener {
             Common.tell(player, "Torch placed with ID:" + id);
             final TorchLocation torchLocation = TorchLocation.fromLocation(event.getBlock().getLocation(), id);
             try {
-                TorchLocationDatabase.getInstance().insertTorchLocation(torchLocation);
+                TorchDatabase.getInstance().insertOrUpdateLocationPair(torchLocation);
             } catch (final SQLException exception) {
                 Common.error(exception);
             }
@@ -61,55 +53,61 @@ public class EnderTorchListener implements Listener {
 
     @EventHandler
     public void onItemCrafted(final CraftItemEvent event) {
-        Common.log("Crafting!!!!");
-        if (event.getRecipe().getResult().isSimilar(EnderTorchItem.enderTorchRecipe.getResult())) {
-            Common.log("Recipe found");
-            final ItemStack itemStack = event.getCurrentItem();
-            final ItemMeta meta = itemStack.getItemMeta();
-            final int id = getNextId();
-            EnderTorchItem.setIdOnName(meta, id);
-            meta.getPersistentDataContainer().set(EnderTorchItem.enderTorchIdKey, PersistentDataType.INTEGER, id);
-            itemStack.setItemMeta(meta);
-            event.setCurrentItem(itemStack);
-        }
-    }
-
-    @EventHandler(priority = EventPriority.MONITOR)
-    public void onPlayerInteraction(final PlayerInteractEvent event) {
-        if(event.getAction() != Action.RIGHT_CLICK_BLOCK) return;
-        if(event.getHand() != EquipmentSlot.HAND) return;
-        final Player player = event.getPlayer();
-        final Block block = event.getClickedBlock();
-        Common.tell(player, "Thanks for interacting with your " + event.getHand() + "...");
-        if (block != null && block.getType() == Material.SOUL_TORCH){
+        try {
+            Common.log("Crafting!!!!");
+            if (event.getRecipe().getResult().isSimilar(EnderTorchItem.enderTorchRecipe.getResult())) {
+                Common.log("Recipe found");
+                final ItemStack itemStack = event.getCurrentItem();
+                final ItemMeta meta = itemStack.getItemMeta();
+                final int id = TorchDatabase.getInstance().getNextId();
+                EnderTorchItem.setIdOnName(meta, id);
+                meta.getPersistentDataContainer().set(EnderTorchItem.enderTorchIdKey, PersistentDataType.INTEGER, id);
+                itemStack.setItemMeta(meta);
+                event.setCurrentItem(itemStack);
+            }
+        } catch (SQLException exception) {
+            Common.error(exception);
+            Common.tell(event.getWhoClicked(), "Something went wrong...");
             event.setCancelled(true);
-            final Location blockLocation = block.getLocation();
-            try{
-                final Optional<TorchLocation> destinationTorchLocationFromDB = TorchLocationDatabase.getInstance().getDestinationTorch(blockLocation);
-                //Common.tell(player, "Present:", torchLocationFromDB.isPresent() ? "true" : "false");
-                if(destinationTorchLocationFromDB.isPresent()){
-                    Common.tell(player, "Paying...");
-                    if(!playerPayForTeleport(player)){
-                        player.getWorld().playSound(player.getLocation(), Sound.BLOCK_BAMBOO_HIT, 5, 1);
-                        //Common.tell(player, "Sorry you cannot afford to teleport, please come back with " + teleportPriceTextual + ".");
-                        return;
-                    }
-                    final Location playerLocation = player.getLocation();
-                    final Location targetLocation = destinationTorchLocationFromDB.get().getLocation();
-                    targetLocation.setDirection(playerLocation.getDirection());
-                    Common.tell(player, "Teleporting...");
-                    player.getWorld().playSound(playerLocation, Sound.ITEM_CHORUS_FRUIT_TELEPORT, 10, 1);
-                    player.getWorld().playSound(targetLocation, Sound.ITEM_CHORUS_FRUIT_TELEPORT, 10, 1);
-                    event.getPlayer().teleport(targetLocation);
-                }
-            }
-            catch (final SQLException exception) {
-                Common.error(exception);
-            }
         }
     }
 
-    public boolean playerPayForTeleport(final Player player){
+    @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
+    public void onPlayerInteraction(final PlayerInteractEvent event) {
+        if (event.getAction() != Action.RIGHT_CLICK_BLOCK) return;
+        if (event.getHand() != EquipmentSlot.HAND) return;
+        final Block block = event.getClickedBlock();
+        if (block != null && block.getType() == Material.SOUL_TORCH) {
+            final Location blockLocation = block.getLocation();
+            Optional<TorchLocation> torchLocation = TorchDatabase.getInstance().getTorchAtLocation(blockLocation);
+
+            torchLocation.ifPresent(location -> handleTorchInteracted(event, location));
+        }
+    }
+
+    private void handleTorchInteracted(PlayerInteractEvent event, TorchLocation torchLocation) {
+        event.setCancelled(true);
+        final Player player = event.getPlayer();
+        final Optional<TorchLocation> destinationTorch = TorchDatabase.getInstance().getDestinationTorch(torchLocation);
+        //Common.tell(player, "Present:", torchLocationFromDB.isPresent() ? "true" : "false");
+        if (destinationTorch.isPresent()) {
+            Common.tell(player, "Paying...");
+            if (!playerPayForTeleport(player)) {
+                player.getWorld().playSound(player.getLocation(), Sound.BLOCK_BAMBOO_HIT, 5, 1);
+                //Common.tell(player, "Sorry you cannot afford to teleport, please come back with " + teleportPriceTextual + ".");
+                return;
+            }
+            final Location playerLocation = player.getLocation();
+            final Location targetLocation = destinationTorch.get().getLocation();
+            targetLocation.setDirection(playerLocation.getDirection());
+            Common.tell(player, "Teleporting...");
+            player.getWorld().playSound(playerLocation, Sound.ITEM_CHORUS_FRUIT_TELEPORT, 10, 1);
+            player.getWorld().playSound(targetLocation, Sound.ITEM_CHORUS_FRUIT_TELEPORT, 10, 1);
+            event.getPlayer().teleport(targetLocation);
+        }
+    }
+
+    private boolean playerPayForTeleport(final Player player) {
         return PlayerUtil.take(player, teleportPriceMaterial, teleportPriceAmount);
     }
 }
