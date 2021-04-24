@@ -13,6 +13,7 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.Action;
+import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
 import org.bukkit.event.inventory.ClickType;
 import org.bukkit.event.inventory.CraftItemEvent;
@@ -53,6 +54,36 @@ public class EnderTorchListener implements Listener {
             } catch (final SQLException exception) {
                 Common.error(exception);
                 event.setCancelled(true);
+            }
+        }
+    }
+    @EventHandler
+    public void onBlockBroken(final BlockBreakEvent event) {
+        if(event.getBlock().getType().equals(Material.SOUL_TORCH)){
+            Common.broadcast("BROKEN");
+            Location location = event.getBlock().getLocation();
+            Optional<TorchLocation> torch = TorchDatabase.getInstance().getTorchAtLocation(location);
+            if(torch.isPresent()){
+                try {
+                    Optional<TorchLocation> destinationTorch = TorchDatabase.getInstance().getDestinationTorch(torch.get());
+                    int pairId = torch.get().getTorchId();
+                    int id = torch.get().getId();
+                    TorchDatabase.getInstance().deleteLocationPair(pairId);
+                    TorchDatabase.getInstance().deleteLocation(id);
+                    event.setDropItems(false);
+                    event.getBlock().getWorld().playSound(location, Sound.BLOCK_GLASS_BREAK, 1, 0.7f);
+                    if(destinationTorch.isPresent()){
+                        TorchDatabase.getInstance().deleteLocation(destinationTorch.get().getId());
+                        Location destinationLocation = destinationTorch.get().getLocation();
+                        Block destinationBlock = destinationLocation.getBlock();
+                        if (destinationBlock.getType().equals(Material.SOUL_TORCH)){
+                            destinationBlock.setType(Material.AIR);
+                            destinationBlock.getWorld().playSound(destinationLocation, Sound.BLOCK_GLASS_BREAK, 1, 0.7f);
+                        }
+                    }
+                } catch (SQLException exception) {
+                    Common.error(exception);
+                }
             }
         }
     }
