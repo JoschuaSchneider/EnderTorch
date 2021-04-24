@@ -3,6 +3,7 @@ package dev.joschua.endertorch.event;
 import dev.joschua.endertorch.database.TorchDatabase;
 import dev.joschua.endertorch.database.TorchLocation;
 import dev.joschua.endertorch.item.EnderTorchItem;
+import dev.joschua.endertorch.structures.EnderTorchStructure;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Particle;
@@ -36,6 +37,8 @@ public class EnderTorchListener implements Listener {
     private final int teleportPriceAmount = 1;
     private final String teleportPriceTextual = "1 Diamond";
 
+    private EnderTorchStructure enderTorchStructure = new EnderTorchStructure();
+
     @EventHandler
     public void onBlockPlaced(final BlockPlaceEvent event) {
 
@@ -47,6 +50,13 @@ public class EnderTorchListener implements Listener {
             final int id = event.getItemInHand().getItemMeta().getPersistentDataContainer().get(EnderTorchItem.enderTorchIdKey, PersistentDataType.INTEGER);
             Common.tell(player, "Torch placed with ID:" + id);
             Location location = event.getBlock().getLocation();
+
+            if(!checkPortalValid(location)){
+                event.setCancelled(true);
+                playErrorSound(location);
+                return;
+            }
+
             final TorchLocation torchLocation = TorchLocation.fromLocation(location, id);
             try {
                 TorchDatabase.getInstance().insertOrUpdateLocationPair(torchLocation);
@@ -60,7 +70,6 @@ public class EnderTorchListener implements Listener {
     @EventHandler
     public void onBlockBroken(final BlockBreakEvent event) {
         if(event.getBlock().getType().equals(Material.SOUL_TORCH)){
-            Common.broadcast("BROKEN");
             Location location = event.getBlock().getLocation();
             Optional<TorchLocation> torch = TorchDatabase.getInstance().getTorchAtLocation(location);
             if(torch.isPresent()){
@@ -130,17 +139,19 @@ public class EnderTorchListener implements Listener {
         final Optional<TorchLocation> destinationTorch = TorchDatabase.getInstance().getDestinationTorch(torchLocation);
         //Common.tell(player, "Present:", torchLocationFromDB.isPresent() ? "true" : "false");
         if (destinationTorch.isPresent()) {
-            Common.tell(player, "Paying...");
-            if (!playerPayForTeleport(player)) {
-                player.getWorld().playSound(player.getLocation(), Sound.BLOCK_BAMBOO_HIT, 5, 1);
+            final Location playerLocation = player.getLocation();
+            final Location targetLocation = destinationTorch.get().getLocation();
+
+            boolean isPortalValid = checkPortalValid(torchLocation.getLocation());
+            boolean isDestinationPortalValid = checkPortalValid(targetLocation);
+            if (!isPortalValid || !isDestinationPortalValid || !playerPayForTeleport(player)) {
+                playErrorSound(playerLocation);
                 //Common.tell(player, "Sorry you cannot afford to teleport, please come back with " + teleportPriceTextual + ".");
                 return;
             }
-            final Location playerLocation = player.getLocation();
-            final Location targetLocation = destinationTorch.get().getLocation();
+
             makeLocationCentered(targetLocation);
             targetLocation.setDirection(playerLocation.getDirection());
-            Common.tell(player, "Teleporting...");
             spawnParticleAtLocation(Particle.PORTAL, playerLocation, 40);
             player.getWorld().playSound(playerLocation, Sound.ITEM_CHORUS_FRUIT_TELEPORT, 10, 1);
             event.getPlayer().teleport(targetLocation);
@@ -161,5 +172,13 @@ public class EnderTorchListener implements Listener {
 
     private void spawnParticleAtLocation(Particle particle, Location location, int count){
         location.getWorld().spawnParticle(particle, location, count);
+    }
+
+    private boolean checkPortalValid(Location location){
+        return enderTorchStructure.checkAllStructureRotations(location);
+    }
+
+    private void playErrorSound(Location location){
+        location.getWorld().playSound(location, Sound.BLOCK_BAMBOO_HIT, 1, 1);
     }
 }
