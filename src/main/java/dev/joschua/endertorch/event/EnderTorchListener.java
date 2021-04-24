@@ -4,21 +4,24 @@ import dev.joschua.endertorch.database.TorchDatabase;
 import dev.joschua.endertorch.database.TorchLocation;
 import dev.joschua.endertorch.item.EnderTorchItem;
 import org.bukkit.Location;
+import org.bukkit.Material;
+import org.bukkit.Particle;
 import org.bukkit.Sound;
 import org.bukkit.block.Block;
 import org.bukkit.entity.Player;
-import org.bukkit.Material;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.Action;
 import org.bukkit.event.block.BlockPlaceEvent;
+import org.bukkit.event.inventory.ClickType;
 import org.bukkit.event.inventory.CraftItemEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.persistence.PersistentDataType;
+import org.bukkit.util.Vector;
 import org.mineacademy.fo.Common;
 import org.mineacademy.fo.PlayerUtil;
 import org.mineacademy.fo.remain.CompMaterial;
@@ -42,11 +45,14 @@ public class EnderTorchListener implements Listener {
         if (event.getItemInHand().getItemMeta().getPersistentDataContainer().has(EnderTorchItem.enderTorchIdKey, PersistentDataType.INTEGER)) {
             final int id = event.getItemInHand().getItemMeta().getPersistentDataContainer().get(EnderTorchItem.enderTorchIdKey, PersistentDataType.INTEGER);
             Common.tell(player, "Torch placed with ID:" + id);
-            final TorchLocation torchLocation = TorchLocation.fromLocation(event.getBlock().getLocation(), id);
+            Location location = event.getBlock().getLocation();
+            final TorchLocation torchLocation = TorchLocation.fromLocation(location, id);
             try {
                 TorchDatabase.getInstance().insertOrUpdateLocationPair(torchLocation);
+                spawnParticleAtLocation(Particle.CRIT_MAGIC, makeLocationCentered(location), 20);
             } catch (final SQLException exception) {
                 Common.error(exception);
+                event.setCancelled(true);
             }
         }
     }
@@ -54,9 +60,11 @@ public class EnderTorchListener implements Listener {
     @EventHandler
     public void onItemCrafted(final CraftItemEvent event) {
         try {
-            Common.log("Crafting!!!!");
             if (event.getRecipe().getResult().isSimilar(EnderTorchItem.enderTorchRecipe.getResult())) {
-                Common.log("Recipe found");
+                if(event.isShiftClick() || event.getClick().equals(ClickType.MIDDLE)){
+                    event.setCancelled(true);
+                    return;
+                }
                 final ItemStack itemStack = event.getCurrentItem();
                 final ItemMeta meta = itemStack.getItemMeta();
                 final int id = TorchDatabase.getInstance().getNextId();
@@ -99,15 +107,28 @@ public class EnderTorchListener implements Listener {
             }
             final Location playerLocation = player.getLocation();
             final Location targetLocation = destinationTorch.get().getLocation();
+            makeLocationCentered(targetLocation);
             targetLocation.setDirection(playerLocation.getDirection());
             Common.tell(player, "Teleporting...");
+            spawnParticleAtLocation(Particle.PORTAL, playerLocation, 40);
             player.getWorld().playSound(playerLocation, Sound.ITEM_CHORUS_FRUIT_TELEPORT, 10, 1);
-            player.getWorld().playSound(targetLocation, Sound.ITEM_CHORUS_FRUIT_TELEPORT, 10, 1);
             event.getPlayer().teleport(targetLocation);
+            player.getWorld().playSound(targetLocation, Sound.ITEM_CHORUS_FRUIT_TELEPORT, 10, 1);
         }
     }
 
     private boolean playerPayForTeleport(final Player player) {
         return PlayerUtil.take(player, teleportPriceMaterial, teleportPriceAmount);
+    }
+
+    private Location makeLocationCentered(Location location){
+        location.setX(location.getBlockX());
+        location.setZ(location.getBlockZ());
+        Vector offset = new Vector(0.5, 0, 0.5);
+        return location.add(offset);
+    }
+
+    private void spawnParticleAtLocation(Particle particle, Location location, int count){
+        location.getWorld().spawnParticle(particle, location, count);
     }
 }
